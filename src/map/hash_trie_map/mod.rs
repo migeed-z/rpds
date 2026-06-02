@@ -364,8 +364,7 @@ where
                         let compress: bool = {
                             let subtree = subtrees.first().unwrap();
 
-                            // Keep collision at the bottom of the tree.
-                            matches!(subtree.borrow(), Node::Leaf(Bucket::Single(_)))
+                            matches!(subtree.borrow(), Node::Leaf(_))
                         };
 
                         match compress {
@@ -616,18 +615,6 @@ where
                         let removed =
                             bucket_utils::list_remove_first(entries, |e| e.matches(key, key_hash))
                                 .is_some();
-
-                        match entries.len() {
-                            0 => unreachable!(
-                                "impossible to have collision with a single or no entry"
-                            ),
-                            1 => {
-                                let entry = entries.first().unwrap().clone();
-
-                                *b = Bucket::Single(entry);
-                            }
-                            _ => (),
-                        }
 
                         *bucket = Some(b);
 
