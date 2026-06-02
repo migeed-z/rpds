@@ -235,6 +235,7 @@ mod hasher_mocks {
         }
     }
 
+    #[derive(Debug)]
     pub struct LimitedHashSpaceHashBuilder {
         inner_hash_builder: crate::utils::DefaultBuildHasher,
         hash_space_size: usize,
@@ -1235,4 +1236,162 @@ fn test_serde() {
     let decoded: HashTrieMap<i32, i32> = serde_json::from_str(&encoded).unwrap();
 
     assert_eq!(map, decoded);
+}
+
+#[test]
+fn test_retain_even_keys() {
+    let map: HashTrieMap<i32, &str> = ht_map![1 => "a", 2 => "b", 3 => "c", 4 => "d", 5 => "e"];
+    let retained = map.retain(|k, _| k % 2 == 0);
+
+    assert_eq!(retained.size(), 2);
+    assert_eq!(retained.get(&2), Some(&"b"));
+    assert_eq!(retained.get(&4), Some(&"d"));
+    assert_eq!(retained.get(&1), None);
+    assert_eq!(retained.get(&3), None);
+    assert_eq!(retained.get(&5), None);
+}
+
+#[test]
+fn test_retain_all() {
+    let map: HashTrieMap<i32, &str> = ht_map![1 => "a", 2 => "b", 3 => "c"];
+    let retained = map.retain(|_, _| true);
+
+    assert_eq!(retained.size(), map.size());
+    assert_eq!(retained, map);
+}
+
+#[test]
+fn test_retain_none() {
+    let map: HashTrieMap<i32, &str> = ht_map![1 => "a", 2 => "b", 3 => "c"];
+    let retained = map.retain(|_, _| false);
+
+    assert!(retained.is_empty());
+    assert_eq!(retained.size(), 0);
+}
+
+#[test]
+fn test_retain_by_value() {
+    let map: HashTrieMap<&str, i32> = ht_map!["x" => 10, "y" => 20, "z" => 30];
+    let retained = map.retain(|_, v| *v >= 20);
+
+    assert_eq!(retained.size(), 2);
+    assert_eq!(retained.get("y"), Some(&20));
+    assert_eq!(retained.get("z"), Some(&30));
+    assert_eq!(retained.get("x"), None);
+}
+
+#[test]
+fn test_retain_mut() {
+    let mut map: HashTrieMap<i32, &str> = ht_map![1 => "a", 2 => "b", 3 => "c", 4 => "d"];
+    map.retain_mut(|k, _| k % 2 == 0);
+
+    assert_eq!(map.size(), 2);
+    assert_eq!(map.get(&2), Some(&"b"));
+    assert_eq!(map.get(&4), Some(&"d"));
+    assert_eq!(map.get(&1), None);
+}
+
+#[test]
+fn test_retain_many_elements() {
+    let mut map: HashTrieMap<i32, i32> = HashTrieMap::new();
+
+    for i in 0..200 {
+        map.insert_mut(i, i * 10);
+    }
+
+    map.retain_mut(|k, _| k % 3 == 0);
+
+    assert_eq!(map.size(), 67);
+
+    for i in 0..200 {
+        if i % 3 == 0 {
+            assert_eq!(map.get(&i), Some(&(i * 10)));
+        } else {
+            assert_eq!(map.get(&i), None);
+        }
+    }
+}
+
+#[test]
+fn test_retain_empty_map() {
+    let map: HashTrieMap<i32, i32> = HashTrieMap::new();
+    let retained = map.retain(|_, _| true);
+
+    assert!(retained.is_empty());
+}
+
+#[test]
+fn test_retain_single_element_kept() {
+    let map: HashTrieMap<i32, &str> = ht_map![42 => "answer"];
+    let retained = map.retain(|_, _| true);
+
+    assert_eq!(retained.size(), 1);
+    assert_eq!(retained.get(&42), Some(&"answer"));
+}
+
+#[test]
+fn test_retain_single_element_removed() {
+    let map: HashTrieMap<i32, &str> = ht_map![42 => "answer"];
+    let retained = map.retain(|_, _| false);
+
+    assert!(retained.is_empty());
+}
+
+#[test]
+fn test_retain_collision_subset() {
+    let degree = 4;
+    let hasher = hasher_mocks::LimitedHashSpaceHashBuilder::new(2);
+
+    fn retain_test(mut map: HashTrieMap<i32, i32, archery::RcK, hasher_mocks::LimitedHashSpaceHashBuilder>) {
+        for i in 0..10 {
+            map.insert_mut(i, i * 100);
+        }
+
+        let retained = map.retain(|k, _| *k < 5);
+
+        assert_eq!(retained.size(), 5);
+
+        for i in 0..5 {
+            assert_eq!(retained.get(&i), Some(&(i * 100)));
+        }
+        for i in 5..10 {
+            assert_eq!(retained.get(&i), None);
+        }
+
+        let mut rebuilt = map.clone();
+        for i in 0..10_i32 {
+            rebuilt.remove_mut(&i);
+        }
+        for i in 0..5_i32 {
+            rebuilt.insert_mut(i, i * 100);
+        }
+        assert_eq!(retained, rebuilt);
+    }
+
+    retain_test(HashTrieMap::new_with_hasher_and_degree_and_ptr_kind(hasher, degree));
+}
+
+#[test]
+fn test_retain_mut_collision_to_single() {
+    let degree = 4;
+    let hasher = hasher_mocks::LimitedHashSpaceHashBuilder::new(1);
+
+    fn test(mut map: HashTrieMap<i32, i32, archery::RcK, hasher_mocks::LimitedHashSpaceHashBuilder>) {
+        map.insert_mut(10, 100);
+        map.insert_mut(20, 200);
+        map.insert_mut(30, 300);
+
+        map.retain_mut(|k, _| *k == 10);
+
+        assert_eq!(map.size(), 1);
+        assert_eq!(map.get(&10), Some(&100));
+        assert_eq!(map.get(&20), None);
+        assert_eq!(map.get(&30), None);
+
+        map.insert_mut(40, 400);
+        assert_eq!(map.size(), 2);
+        assert_eq!(map.get(&40), Some(&400));
+    }
+
+    test(HashTrieMap::new_with_hasher_and_degree_and_ptr_kind(hasher, degree));
 }

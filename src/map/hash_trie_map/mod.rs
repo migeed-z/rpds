@@ -441,14 +441,80 @@ where
         }
     }
 
+    fn retain<F>(&mut self, f: &F, depth: usize, degree: u8) -> usize
+    where
+        K: Clone,
+        V: Clone,
+        F: Fn(&K, &V) -> bool,
+    {
+        match self {
+            Node::Branch(subtrees) => {
+                let mut total_removed = 0;
+                let mut indices_to_remove: Vec<usize> = Vec::new();
+
+                for virtual_index in 0..(8 * core::mem::size_of::<usize>()) {
+                    if let Some(subtree_ptr) = subtrees.get_mut(virtual_index) {
+                        let subtree = SharedPointer::make_mut(subtree_ptr);
+                        total_removed += subtree.retain(f, depth + 1, degree);
+
+                        if subtree.is_empty() {
+                            indices_to_remove.push(virtual_index);
+                        }
+                    }
+                }
+
+                for index in indices_to_remove.into_iter().rev() {
+                    subtrees.remove(index);
+                }
+
+                self.compress();
+
+                total_removed
+            }
+            Node::Leaf(bucket) => {
+                match bucket {
+                    Bucket::Single(entry) => {
+                        if f(entry.key(), entry.value()) {
+                            0
+                        } else {
+                            *self = Node::new_empty_branch();
+                            1
+                        }
+                    }
+                    Bucket::Collision(entries) => {
+                        let mut new_entries = List::new_with_ptr_kind();
+                        let mut kept = 0usize;
+
+                        for entry in entries.iter() {
+                            if f(entry.key(), entry.value()) {
+                                new_entries.push_front_mut(entry.clone());
+                                kept += 1;
+                            }
+                        }
+
+                        let original_len = entries.len();
+
+                        match kept {
+                            0 => {
+                                *self = Node::new_empty_branch();
+                            }
+                            _ => {
+                                *entries = new_entries;
+                            }
+                        }
+
+                        kept
+                    }
+                }
+            }
+        }
+    }
+
     fn is_empty(&self) -> bool {
         match self {
             Node::Branch(subtrees) => subtrees.size() == 0,
             Node::Leaf(Bucket::Single(_)) => false,
-            Node::Leaf(Bucket::Collision(entries)) => {
-                debug_assert!(entries.len() >= 2, "collisions must have at least two entries");
-                false
-            }
+            Node::Leaf(Bucket::Collision(entries)) => entries.is_empty(),
         }
     }
 }
@@ -908,6 +974,33 @@ where
         SharedPointer::make_mut(&mut self.root)
             .get_mut(key, key_hash, 0, self.degree)
             .map(EntryWithHash::value_mut)
+    }
+}
+
+impl<K, V, P, H: BuildHasher> HashTrieMap<K, V, P, H>
+where
+    K: Eq + Hash + Clone,
+    V: Clone,
+    H: Clone,
+    P: SharedPointerKind,
+{
+    #[must_use]
+    pub fn retain<F>(&self, f: F) -> HashTrieMap<K, V, P, H>
+    where
+        F: Fn(&K, &V) -> bool,
+    {
+        let mut new_map = self.clone();
+        new_map.retain_mut(f);
+        new_map
+    }
+
+    pub fn retain_mut<F>(&mut self, f: F)
+    where
+        F: Fn(&K, &V) -> bool,
+    {
+        let removed =
+            SharedPointer::make_mut(&mut self.root).retain(&f, 0, self.degree);
+        self.size -= removed;
     }
 }
 
